@@ -1,0 +1,137 @@
+--- a/Extensions/Touch.cpp
++++ b/Extensions/Touch.cpp
+@@ -3,6 +3,18 @@
+ // https://github.com/maxpautsch
+ 
+ // Define TOUCH_CS is the user setup file to enable this code
++
++// Separate VSPI bus for touch controller to avoid conflicts with LCD SPI bus
++#include <SPI.h>
++
++// VSPI Configuration for Touch Controller
++#define VSPI_MISO  TOUCH_MISO
++#define VSPI_MOSI  TOUCH_MOSI
++#define VSPI_CLK   TOUCH_CLK
++#define VSPI_CS    TOUCH_CS
++
++// Create separate SPI object for touch using VSPI
++static SPIClass spi_touch(VSPI);
+ 
+ // A demo is provided in examples Generic folder
+ 
+@@ -20,19 +32,34 @@
+ /***************************************************************************************
+ ** Function name:           begin_touch_read_write - was spi_begin_touch
+ ** Description:             Start transaction and select touch controller
+ ***************************************************************************************/
+ // The touch controller has a low SPI clock rate
+ inline void TFT_eSPI::begin_touch_read_write(void){
+   DMA_BUSY_CHECK;
+-  CS_H; // Just in case it has been left low
++  // Initialize VSPI for touch on first use
++  static bool touch_spi_initialized = false;
++  if (!touch_spi_initialized) {
++    spi_touch.begin(VSPI_CLK, VSPI_MISO, VSPI_MOSI, VSPI_CS);
++    touch_spi_initialized = true;
++  }
++
+   #if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS)
+-    if (locked) {locked = false; spi.beginTransaction(SPISettings(SPI_TOUCH_FREQUENCY, MSBFIRST, SPI_MODE0));}
++    spi_touch.beginTransaction(SPISettings(SPI_TOUCH_FREQUENCY, MSBFIRST, SPI_MODE0));
+   #else
+-    spi.setFrequency(SPI_TOUCH_FREQUENCY);
++    spi_touch.setFrequency(SPI_TOUCH_FREQUENCY);
+   #endif
+   SET_BUS_READ_MODE;
+-  T_CS_L;
++  digitalWrite(VSPI_CS, LOW);
+ }
+ 
+ /***************************************************************************************
+ ** Function name:           end_touch_read_write - was spi_end_touch
+ ** Description:             End transaction and deselect touch controller
+ ***************************************************************************************/
+ inline void TFT_eSPI::end_touch_read_write(void){
+-  T_CS_H;
++  digitalWrite(VSPI_CS, HIGH);
++
+   #if defined (SPI_HAS_TRANSACTION) && defined (SUPPORT_TRANSACTIONS)
+-    if(!inTransaction) {if (!locked) {locked = true; spi.endTransaction();}}
++    spi_touch.endTransaction();
+   #else
+-    spi.setFrequency(SPI_FREQUENCY);
++    // Frequency management is now handled by dedicated spi_touch object
+   #endif
+ }
+ 
+@@ -41,14 +68,14 @@
+ ** Description:             read raw touch position.  Always returns true.
+ ***************************************************************************************/
+ uint8_t TFT_eSPI::getTouchRaw(uint16_t *x, uint16_t *y){
+   uint16_t tmp;
+ 
+   begin_touch_read_write();
+-  
++
+   // Start YP sample request for x position, read 4 times and keep last sample
+-  spi.transfer(0xd0);                    // Start new YP conversion
+-  spi.transfer(0);                       // Read first 8 bits
+-  spi.transfer(0xd0);                    // Read last 8 bits and start new YP conversion
+-  spi.transfer(0);                       // Read first 8 bits
+-  spi.transfer(0xd0);                    // Read last 8 bits and start new YP conversion
+-  spi.transfer(0);                       // Read first 8 bits
+-  spi.transfer(0xd0);                    // Read last 8 bits and start new YP conversion
++  spi_touch.transfer(0xd0);                    // Start new YP conversion
++  spi_touch.transfer(0);                       // Read first 8 bits
++  spi_touch.transfer(0xd0);                    // Read last 8 bits and start new YP conversion
++  spi_touch.transfer(0);                       // Read first 8 bits
++  spi_touch.transfer(0xd0);                    // Read last 8 bits and start new YP conversion
++  spi_touch.transfer(0);                       // Read first 8 bits
++  spi_touch.transfer(0xd0);                    // Read last 8 bits and start new YP conversion
+ 
+-  tmp = spi.transfer(0);                   // Read first 8 bits
++  tmp = spi_touch.transfer(0);                   // Read first 8 bits
+   tmp = tmp <<5;
+-  tmp |= 0x1f & (spi.transfer(0x90)>>3);   // Read last 8 bits and start new XP conversion
++  tmp |= 0x1f & (spi_touch.transfer(0x90)>>3);   // Read last 8 bits and start new XP conversion
+ 
+   *x = tmp;
+ 
+   // Start XP sample request for y position, read 4 times and keep last sample
+-  spi.transfer(0);                       // Read first 8 bits
+-  spi.transfer(0x90);                    // Read last 8 bits and start new XP conversion
+-  spi.transfer(0);                       // Read first 8 bits
+-  spi.transfer(0x90);                    // Read last 8 bits and start new XP conversion
+-  spi.transfer(0);                       // Read first 8 bits
+-  spi.transfer(0x90);                    // Read last 8 bits and start new XP conversion
++  spi_touch.transfer(0);                       // Read first 8 bits
++  spi_touch.transfer(0x90);                    // Read last 8 bits and start new XP conversion
++  spi_touch.transfer(0);                       // Read first 8 bits
++  spi_touch.transfer(0x90);                    // Read last 8 bits and start new XP conversion
++  spi_touch.transfer(0);                       // Read first 8 bits
++  spi_touch.transfer(0x90);                    // Read last 8 bits and start new XP conversion
+ 
+-  tmp = spi.transfer(0);                 // Read first 8 bits
++  tmp = spi_touch.transfer(0);                 // Read first 8 bits
+   tmp = tmp <<5;
+-  tmp |= 0x1f & (spi.transfer(0)>>3);    // Read last 8 bits
++  tmp |= 0x1f & (spi_touch.transfer(0)>>3);    // Read last 8 bits
+ 
+   *y = tmp;
+ 
+@@ -62,11 +89,11 @@
+ ***************************************************************************************/
+ uint16_t TFT_eSPI::getTouchRawZ(void){
+ 
+   begin_touch_read_write();
+ 
+   // Z sample request
+   int16_t tz = 0xFFF;
+-  spi.transfer(0xb0);               // Start new Z1 conversion
+-  tz += spi.transfer16(0xc0) >> 3;  // Read Z1 and start Z2 conversion
+-  tz -= spi.transfer16(0x00) >> 3;  // Read Z2
++  spi_touch.transfer(0xb0);               // Start new Z1 conversion
++  tz += spi_touch.transfer16(0xc0) >> 3;  // Read Z1 and start Z2 conversion
++  tz -= spi_touch.transfer16(0x00) >> 3;  // Read Z2
+ 
+   end_touch_read_write();

@@ -6,6 +6,17 @@
 
 using namespace KMUTNB;
 
+static void event_handler(lv_event_t * e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_obj_t * obj = lv_event_get_target_obj(e);
+    if(code == LV_EVENT_VALUE_CHANGED) {
+        char buf[32];
+        lv_dropdown_get_selected_str(obj, buf, sizeof(buf));
+        LV_LOG_USER("Option: %s", buf);
+    }
+}
+
 MainScreen::MainScreen() : screen(nullptr), main_label(nullptr), touch_cursor(nullptr), touch_position_label(nullptr), cachedSensor(nullptr) {}
 
 void MainScreen::build() {
@@ -25,14 +36,32 @@ void MainScreen::build() {
     // Hello Label
     main_label = lv_label_create(screen);
     lv_label_set_text(main_label, "Initializing...");
-    lv_obj_align(main_label, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(main_label, LV_ALIGN_BOTTOM_RIGHT, 0, -30);
 
     touch_position_label = lv_label_create(screen);
     lv_label_set_text(touch_position_label, "");
-    lv_obj_align_to(touch_position_label, screen, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 10);
+    lv_obj_align(touch_position_label, LV_ALIGN_BOTTOM_RIGHT, 0, -10);
 
-    lv_obj_set_style_text_align(touch_position_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_t * spinner = lv_spinner_create(screen);
+    lv_obj_set_size(spinner, 100, 100);
+    lv_obj_center(spinner);
+    lv_spinner_set_anim_params(spinner, 10000, 200);
 
+    /*Create a normal drop down list*/
+    lv_obj_t * dd = lv_dropdown_create(screen);
+    lv_dropdown_set_options(dd, "Apple\n"
+                            "Banana\n"
+                            "Orange\n"
+                            "Cherry\n"
+                            "Grape\n"
+                            "Raspberry\n"
+                            "Melon\n"
+                            "Orange\n"
+                            "Lemon\n"
+                            "Nuts");
+    
+    lv_obj_align(dd, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_add_event_cb(dd, event_handler, LV_EVENT_ALL, NULL);
 
     // Cache the ADXL345 sensor reference if available
     SensorManager* sensorManager = SensorManager::getInstance();

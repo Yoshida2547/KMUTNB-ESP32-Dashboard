@@ -16,13 +16,16 @@ constexpr int8_t PIN_RST = 46;
 constexpr int8_t PIN_BL = 16;
 
 #if USE_GFX_DMA
+// Use default DMA SPI host (HSPI) to avoid FSPI/flash conflicts
 Arduino_DataBus *bus = new Arduino_ESP32SPIDMA(PIN_DC, PIN_CS, PIN_SCLK, PIN_MOSI, PIN_MISO);
 constexpr const char *kBusMode = "DMA";
+// Use 18-bit ILI9488 driver for DMA path to match color format
+Arduino_GFX *gfx = new Arduino_ILI9488_18bit(bus, PIN_RST, 1, false);
 #else
 Arduino_DataBus *bus = new Arduino_ESP32SPI(PIN_DC, PIN_CS, PIN_SCLK, PIN_MOSI, PIN_MISO);
 constexpr const char *kBusMode = "PIO";
-#endif
 Arduino_GFX *gfx = new Arduino_ILI9488_18bit(bus, PIN_RST, 1, false);
+#endif
 
 uint16_t hue = 0;
 uint32_t frame_count = 0;
@@ -56,6 +59,17 @@ void setup() {
       delay(1000);
     }
   }
+  // For non-DMA path, force bus init to the same frequency for fair comparison.
+  // For DMA path, `gfx->begin()` will initialize the bus; calling bus->begin() here causes
+  // a double init on ESP32 which aborts, so skip it for DMA.
+#if !USE_GFX_DMA
+  bool bus_ok = false;
+  // 60 MHz is a common working SPI frequency for ILI9488 on HSPI
+  bus_ok = bus->begin(60000000);
+  Serial.printf("[new_library_tester] bus->begin(60000000) -> %d\n", bus_ok);
+#else
+  Serial.println("[new_library_tester] DMA path: skipping manual bus->begin(), gfx->begin() will init bus");
+#endif
 
   gfx->fillScreen(BLACK);
   drawStatus();
@@ -107,5 +121,5 @@ void loop() {
     report_start_ms = now_ms;
   }
 
-  delay(80);
+  // No intentional delay so we measure raw rendering throughput
 }

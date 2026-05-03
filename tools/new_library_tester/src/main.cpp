@@ -15,6 +15,9 @@ Arduino_DataBus *bus = new Arduino_ESP32SPIDMA(PIN_DC, PIN_CS, PIN_SCLK, PIN_MOS
 Arduino_GFX *gfx = new Arduino_ILI9488_18bit(bus, PIN_RST, 1, false);
 
 uint16_t hue = 0;
+uint32_t frame_count = 0;
+uint32_t report_start_ms = 0;
+uint64_t frame_time_sum_us = 0;
 
 void drawStatus() {
   gfx->setTextColor(WHITE);
@@ -46,10 +49,13 @@ void setup() {
 
   gfx->fillScreen(BLACK);
   drawStatus();
+  report_start_ms = millis();
   Serial.println("[new_library_tester] Arduino_GFX initialized with SPI DMA");
 }
 
 void loop() {
+  const uint32_t frame_start_us = micros();
+
   // Color-cycle strip confirms continuous rendering without touch/LVGL dependencies.
   const uint16_t barY = 110;
   const uint16_t barH = 40;
@@ -65,6 +71,31 @@ void loop() {
   gfx->setCursor(14, 162);
   gfx->setTextSize(1);
   gfx->printf("tick: %lu    ", millis() / 1000UL);
+
+  const uint32_t frame_time_us = micros() - frame_start_us;
+  frame_count++;
+  frame_time_sum_us += frame_time_us;
+
+  const uint32_t now_ms = millis();
+  const uint32_t elapsed_ms = now_ms - report_start_ms;
+  if (elapsed_ms >= 1000) {
+    const uint32_t fps_x10 = (frame_count * 10000UL) / elapsed_ms;
+    const uint32_t avg_frame_us = frame_time_sum_us / frame_count;
+
+    gfx->setTextColor(CYAN, BLACK);
+    gfx->setCursor(14, 182);
+    gfx->printf("fps: %lu.%lu    ", fps_x10 / 10, fps_x10 % 10);
+
+    gfx->setTextColor(YELLOW, BLACK);
+    gfx->setCursor(14, 200);
+    gfx->printf("frame: %lu.%02lu ms    ", avg_frame_us / 1000, (avg_frame_us % 1000) / 10);
+
+    Serial.printf("[perf] fps=%lu.%lu avg_frame=%lu us\n", fps_x10 / 10, fps_x10 % 10, avg_frame_us);
+
+    frame_count = 0;
+    frame_time_sum_us = 0;
+    report_start_ms = now_ms;
+  }
 
   delay(80);
 }

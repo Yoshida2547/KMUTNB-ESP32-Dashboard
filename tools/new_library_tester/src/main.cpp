@@ -11,7 +11,7 @@ constexpr int8_t PIN_DC = 7;
 constexpr int8_t PIN_RST = 46;
 constexpr int8_t PIN_BL = 16;
 
-Arduino_DataBus *bus = new Arduino_ESP32SPI(PIN_DC, PIN_CS, PIN_SCLK, PIN_MOSI, PIN_MISO);
+Arduino_DataBus *bus = new Arduino_ESP32SPIDMA(PIN_DC, PIN_CS, PIN_SCLK, PIN_MOSI, PIN_MISO);
 Arduino_GFX *gfx = new Arduino_ILI9488_18bit(bus, PIN_RST, 1, false);
 
 uint16_t hue = 0;
@@ -24,7 +24,7 @@ void drawStatus() {
 
   gfx->setCursor(14, 44);
   gfx->setTextSize(1);
-  gfx->println("ILI9488 on HSPI");
+  gfx->println("ILI9488 on HSPI (DMA)");
   gfx->println("SCK=10 MOSI=11 MISO=47");
   gfx->println("CS=45 DC=7 RST=46");
 }
@@ -46,7 +46,7 @@ void setup() {
 
   gfx->fillScreen(BLACK);
   drawStatus();
-  Serial.println("[new_library_tester] Arduino_GFX initialized");
+  Serial.println("[new_library_tester] Arduino_GFX initialized with SPI DMA");
 }
 
 void loop() {

@@ -29,6 +29,7 @@ SPIClass vspi = SPIClass(FSPI);
 XPT2046_Touchscreen *touch = nullptr;
 
 static lv_color_t *draw_buf = nullptr;
+static lv_color_t *draw_buf2 = nullptr;
 static lv_display_t *display = nullptr;
 static lv_indev_t *indev_touchpad = nullptr;
 static lv_obj_t *status_label = nullptr;
@@ -172,10 +173,21 @@ void setup() {
         }
     }
 
+    draw_buf2 = static_cast<lv_color_t *>(heap_caps_malloc(draw_buf_size_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    if (!draw_buf2) {
+        draw_buf2 = static_cast<lv_color_t *>(malloc(draw_buf_size_bytes));
+    }
+    if (!draw_buf2) {
+        Serial.println("[new_library_tester_lvgl] second draw buffer allocation failed");
+        while (true) {
+            delay(1000);
+        }
+    }
+
     display = lv_display_create(display_width, display_height);
     lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB888);
     lv_display_set_flush_cb(display, flush_cb);
-    lv_display_set_buffers(display, draw_buf, nullptr, draw_buf_size_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_buffers(display, draw_buf, draw_buf2, draw_buf_size_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_default(display);
 
     // Register touch input device

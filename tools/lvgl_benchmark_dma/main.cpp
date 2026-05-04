@@ -4,8 +4,6 @@
 #include <lvgl.h>
 #include <XPT2046_Touchscreen.h>
 
-#include <demos/lv_demos.h>
-
 namespace {
 
 // Display SPI pins (HSPI)
@@ -24,8 +22,8 @@ constexpr int8_t TOUCH_MISO = 5;
 constexpr int8_t TOUCH_MOSI = 6;
 constexpr int8_t TOUCH_CLK = 4;
 
-// Prefer DMA-capable databus for faster bulk pixel transfers on ESP32
-Arduino_DataBus *bus = new Arduino_ESP32SPI(PIN_DC, PIN_CS, PIN_SCLK, PIN_MOSI, PIN_MISO);
+// Use DMA-capable databus for faster bulk pixel transfers
+Arduino_DataBus *bus = new Arduino_ESP32SPIDMA(PIN_DC, PIN_CS, PIN_SCLK, PIN_MOSI, PIN_MISO);
 Arduino_GFX *gfx = new Arduino_ILI9488_18bit(bus, PIN_RST, 1, false);
 
 SPIClass vspi = SPIClass(FSPI);
@@ -38,10 +36,14 @@ static lv_indev_t *indev_touchpad = nullptr;
 static uint32_t display_width = 0;
 static uint32_t display_height = 0;
 static uint32_t last_tick_ms = 0;
+static uint32_t frame_count = 0;
+static uint32_t fps_report_ms = 0;
+static uint16_t hue = 0;
 
 void log_cb(lv_log_level_t level, const char *buf) {
-    LV_UNUSED(level);
-    Serial.print(buf);
+    // Intentionally left blank to avoid costly Serial prints during benchmark.
+    (void)level;
+    (void)buf;
 }
 
 void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
@@ -49,6 +51,15 @@ void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
     const uint32_t h = static_cast<uint32_t>(area->y2 - area->y1 + 1);
 
     gfx->draw24bitRGBBitmap(area->x1, area->y1, px_map, w, h);
+    
+    frame_count++;
+    const uint32_t now_ms = millis();
+    if (now_ms - fps_report_ms >= 1000) {
+        Serial.printf("[benchmark_dma] FPS: %lu frames in 1s\n", frame_count);
+        frame_count = 0;
+        fps_report_ms = now_ms;
+    }
+    
     lv_display_flush_ready(disp);
 }
 
@@ -69,11 +80,16 @@ void touchpad_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
         data->point.x = x;
         data->point.y = y;
         data->state = LV_INDEV_STATE_PR;
-
-        Serial.printf("[lvgl_benchmark][touch] raw=(%d,%d) mapped=(%d,%d)\n", p.x, p.y, x, y);
     } else {
         data->state = LV_INDEV_STATE_REL;
     }
+}
+
+void build_benchmark_ui() {
+    lv_obj_t *screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+    lv_screen_load(screen);
 }
 
 }  // namespace
@@ -85,37 +101,38 @@ void setup() {
     pinMode(PIN_BL, OUTPUT);
     digitalWrite(PIN_BL, HIGH);
 
-    Serial.println("[lvgl_benchmark] calling gfx->begin()");
+    Serial.println("[lvgl_benchmark_dma] calling gfx->begin()");
     if (!gfx->begin()) {
-        Serial.println("[lvgl_benchmark] Arduino_GFX init failed");
+        Serial.println("[lvgl_benchmark_dma] Arduino_GFX init failed");
         while (true) {
             delay(1000);
         }
     }
 
-    Serial.println("[lvgl_benchmark] gfx->begin() succeeded");
+    Serial.println("[lvgl_benchmark_dma] gfx->begin() succeeded");
     gfx->fillScreen(BLACK);
 
     display_width = gfx->width();
     display_height = gfx->height();
-    Serial.printf("[lvgl_benchmark] display size: %u x %u\n", display_width, display_height);
+    Serial.printf("[lvgl_benchmark_dma] display size: %u x %u\n", display_width, display_height);
 
-    Serial.println("[lvgl_benchmark] initializing XPT2046 touch");
+    Serial.println("[lvgl_benchmark_dma] initializing XPT2046 touch");
     vspi.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
     touch = new XPT2046_Touchscreen(TOUCH_CS, TOUCH_IRQ);
     if (touch->begin(vspi)) {
-        Serial.println("[lvgl_benchmark] XPT2046 touch initialized");
+        Serial.println("[lvgl_benchmark_dma] XPT2046 touch initialized");
         touch->setRotation(1);
     } else {
-        Serial.println("[lvgl_benchmark] XPT2046 touch init failed");
+        Serial.println("[lvgl_benchmark_dma] XPT2046 touch init failed");
     }
 
     lv_init();
     lv_log_register_print_cb(log_cb);
 
-    const size_t draw_buf_height = 40;
+    // Use RGB888 with DMA for best performance; allocate 60 lines
+    const size_t draw_buf_height = 60;
     const size_t draw_buf_size_bytes = static_cast<size_t>(display_width) * draw_buf_height * sizeof(lv_color_t);
-    Serial.printf("[lvgl_benchmark] allocating draw buffer: %u bytes (%u lines)\n",
+    Serial.printf("[lvgl_benchmark_dma] allocating draw buffer: %u bytes (%u lines)\n",
                   static_cast<unsigned>(draw_buf_size_bytes),
                   static_cast<unsigned>(draw_buf_height));
 
@@ -124,7 +141,7 @@ void setup() {
         draw_buf = static_cast<lv_color_t *>(malloc(draw_buf_size_bytes));
     }
     if (!draw_buf) {
-        Serial.println("[lvgl_benchmark] draw buffer allocation failed");
+        Serial.println("[lvgl_benchmark_dma] draw buffer allocation failed");
         while (true) {
             delay(1000);
         }
@@ -135,7 +152,7 @@ void setup() {
         draw_buf2 = static_cast<lv_color_t *>(malloc(draw_buf_size_bytes));
     }
     if (!draw_buf2) {
-        Serial.println("[lvgl_benchmark] second draw buffer allocation failed");
+        Serial.println("[lvgl_benchmark_dma] second draw buffer allocation failed");
         while (true) {
             delay(1000);
         }
@@ -144,7 +161,7 @@ void setup() {
     display = lv_display_create(display_width, display_height);
     lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB888);
     lv_display_set_flush_cb(display, flush_cb);
-    lv_display_set_buffers(display, draw_buf, draw_buf2, draw_buf_size_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_buffers(display, draw_buf, draw_buf2, draw_buf_size_bytes, LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_default(display);
 
     indev_touchpad = lv_indev_create();
@@ -152,10 +169,11 @@ void setup() {
     lv_indev_set_read_cb(indev_touchpad, touchpad_read_cb);
     lv_indev_set_display(indev_touchpad, display);
 
-    lv_demo_benchmark();
+    build_benchmark_ui();
 
     last_tick_ms = millis();
-    Serial.println("[lvgl_benchmark] initialized");
+    fps_report_ms = millis();
+    Serial.println("[lvgl_benchmark_dma] initialized - color cycle benchmark started");
 }
 
 void loop() {
@@ -165,6 +183,21 @@ void loop() {
     if (elapsed_ms > 0U) {
         lv_tick_inc(elapsed_ms);
         last_tick_ms = now_ms;
+    }
+
+    // Generate a simple color-cycling pattern to stress the display system
+    lv_obj_t *screen = lv_scr_act();
+    hue += 2;
+    
+    for (uint16_t y = 0; y < display_height; y += 40) {
+        for (uint16_t x = 0; x < display_width; x += 40) {
+            uint16_t color = lv_color_to_u32(lv_color_hsv_to_rgb((hue + x + y) % 360, 100, 100));
+            lv_obj_t *rect = lv_obj_create(screen);
+            lv_obj_set_size(rect, 40, 40);
+            lv_obj_set_pos(rect, x, y);
+            lv_obj_set_style_bg_color(rect, lv_color_hex(color & 0xFFFFFF), 0);
+            lv_obj_set_style_border_width(rect, 0, 0);
+        }
     }
 
     lv_timer_handler();

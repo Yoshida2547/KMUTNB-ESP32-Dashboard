@@ -25,6 +25,7 @@ constexpr int8_t TOUCH_CLK = 4;
 Arduino_DataBus *bus = new Arduino_ESP32SPI(PIN_DC, PIN_CS, PIN_SCLK, PIN_MOSI, PIN_MISO);
 Arduino_GFX *gfx = new Arduino_ILI9488_18bit(bus, PIN_RST, 1, false);
 
+SPIClass vspi = SPIClass(FSPI);
 XPT2046_Touchscreen *touch = nullptr;
 
 static lv_color_t *draw_buf = nullptr;
@@ -57,9 +58,16 @@ void touchpad_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 
     if (touch->touched()) {
         TS_Point p = touch->getPoint();
-        data->point.x = p.x;
-        data->point.y = p.y;
+
+        // Map raw touch coordinates to display coordinates
+        int16_t x = map(p.x, 200, 3700, 1, display_width);
+        int16_t y = map(p.y, 240, 3800, display_height, 1);
+
+        data->point.x = x;
+        data->point.y = y;
         data->state = LV_INDEV_STATE_PR;
+
+        Serial.printf("[touch] touched at (%d, %d)\n", p.x, p.y);
     } else {
         data->state = LV_INDEV_STATE_REL;
     }
@@ -70,6 +78,15 @@ void build_ui() {
     lv_obj_set_style_bg_color(screen, lv_color_hex(0xFF0000), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
     lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
+
+    if (indev_touchpad) {
+        // Touch cursor
+        lv_obj_t *touch_cursor = lv_obj_create(screen);
+        lv_obj_set_size(touch_cursor, 10, 10);
+        lv_obj_set_style_bg_color(touch_cursor, lv_palette_main(LV_PALETTE_RED), 0);
+        lv_obj_set_style_radius(touch_cursor, LV_RADIUS_CIRCLE, 0);
+        lv_indev_set_cursor(indev_touchpad, touch_cursor);
+    }
 
     lv_obj_t *panel = lv_obj_create(screen);
     lv_obj_set_size(panel, LV_PCT(100), LV_PCT(100));
@@ -127,8 +144,11 @@ void setup() {
 
     // Initialize touch screen
     Serial.println("[new_library_tester_lvgl] initializing XPT2046 touch");
+
+    vspi.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
+
     touch = new XPT2046_Touchscreen(TOUCH_CS, TOUCH_IRQ);
-    if (touch->begin()) {
+    if (touch->begin(vspi)) {
         Serial.println("[new_library_tester_lvgl] XPT2046 touch initialized");
         touch->setRotation(1);
     } else {

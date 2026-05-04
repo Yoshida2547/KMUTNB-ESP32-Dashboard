@@ -2,9 +2,11 @@
 #include <Arduino_GFX_Library.h>
 #include <esp_heap_caps.h>
 #include <lvgl.h>
+#include <XPT2046_Touchscreen.h>
 
 namespace {
 
+// Display SPI pins (HSPI)
 constexpr int8_t PIN_MISO = 47;
 constexpr int8_t PIN_MOSI = 11;
 constexpr int8_t PIN_SCLK = 10;
@@ -13,52 +15,25 @@ constexpr int8_t PIN_DC = 7;
 constexpr int8_t PIN_RST = 46;
 constexpr int8_t PIN_BL = 16;
 
+// Touch SPI pins (separate from display)
+constexpr int8_t TOUCH_CS = 17;
+constexpr int8_t TOUCH_IRQ = 21;
+constexpr int8_t TOUCH_MISO = 5;
+constexpr int8_t TOUCH_MOSI = 6;
+constexpr int8_t TOUCH_CLK = 4;
+
 Arduino_DataBus *bus = new Arduino_ESP32SPI(PIN_DC, PIN_CS, PIN_SCLK, PIN_MOSI, PIN_MISO);
 Arduino_GFX *gfx = new Arduino_ILI9488_18bit(bus, PIN_RST, 1, false);
 
+XPT2046_Touchscreen *touch = nullptr;
+
 static lv_color_t *draw_buf = nullptr;
 static lv_display_t *display = nullptr;
-static lv_indev_t *indev = nullptr;
+static lv_indev_t *indev_touchpad = nullptr;
 static lv_obj_t *status_label = nullptr;
-static lv_obj_t *spinner_obj = nullptr;
-static lv_obj_t *benchmark_label = nullptr;
-static uint32_t last_stats_ms = 0;
 static uint32_t display_width = 0;
 static uint32_t display_height = 0;
 static uint32_t last_tick_ms = 0;
-static uint32_t flush_count = 0;
-static uint64_t flush_time_sum_us = 0;
-static uint32_t last_flush_area_w = 0;
-static uint32_t last_flush_area_h = 0;
-
-void benchmark_timer_cb(lv_timer_t *timer) {
-    LV_UNUSED(timer);
-
-    const uint32_t elapsed_ms = millis() - last_stats_ms;
-    const uint32_t flush_fps_x10 = (elapsed_ms > 0U) ? (flush_count * 10000UL) / elapsed_ms : 0U;
-    const uint32_t avg_flush_us = (flush_count > 0U) ? static_cast<uint32_t>(flush_time_sum_us / flush_count) : 0U;
-
-    lv_label_set_text_fmt(
-        benchmark_label,
-        "flush %lu.%lu fps\navg %lu us\narea %lux%lu",
-        static_cast<unsigned long>(flush_fps_x10 / 10U),
-        static_cast<unsigned long>(flush_fps_x10 % 10U),
-        static_cast<unsigned long>(avg_flush_us),
-        static_cast<unsigned long>(last_flush_area_w),
-        static_cast<unsigned long>(last_flush_area_h));
-
-    Serial.printf(
-        "[benchmark] flush=%lu.%lu fps avg_flush=%lu us last_area=%lux%lu\n",
-        static_cast<unsigned long>(flush_fps_x10 / 10U),
-        static_cast<unsigned long>(flush_fps_x10 % 10U),
-        static_cast<unsigned long>(avg_flush_us),
-        static_cast<unsigned long>(last_flush_area_w),
-        static_cast<unsigned long>(last_flush_area_h));
-
-    flush_count = 0;
-    flush_time_sum_us = 0;
-    last_stats_ms = millis();
-}
 
 void log_cb(lv_log_level_t level, const char *buf) {
     LV_UNUSED(level);
@@ -68,26 +43,26 @@ void log_cb(lv_log_level_t level, const char *buf) {
 void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
     const uint32_t w = (area->x2 - area->x1 + 1);
     const uint32_t h = (area->y2 - area->y1 + 1);
-    const uint32_t flush_start_us = micros();
-
-    static int flush_log_count = 0;
-    if (flush_log_count < 8 || (flush_log_count % 10) == 0) {
-        Serial.printf("[flush_cb] area x1=%d y1=%d x2=%d y2=%d w=%u h=%u\n", area->x1, area->y1, area->x2, area->y2, w, h);
-    }
-    flush_log_count++;
-    last_flush_area_w = w;
-    last_flush_area_h = h;
 
     gfx->draw24bitRGBBitmap(area->x1, area->y1, px_map, w, h);
-    flush_time_sum_us += static_cast<uint64_t>(micros() - flush_start_us);
-    ::flush_count++;
 
     lv_display_flush_ready(disp);
 }
 
-void touch_read_cb(lv_indev_t *indev_handle, lv_indev_data_t *data) {
-    LV_UNUSED(indev_handle);
-    data->state = LV_INDEV_STATE_RELEASED;
+void touchpad_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
+    if (!touch) {
+        data->state = LV_INDEV_STATE_REL;
+        return;
+    }
+
+    if (touch->touched()) {
+        TS_Point p = touch->getPoint();
+        data->point.x = p.x;
+        data->point.y = p.y;
+        data->state = LV_INDEV_STATE_PR;
+    } else {
+        data->state = LV_INDEV_STATE_REL;
+    }
 }
 
 void build_ui() {
@@ -112,32 +87,14 @@ void build_ui() {
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 18);
 
     status_label = lv_label_create(panel);
-    lv_label_set_text(status_label, "Arduino_GFX 18-bit");
+    lv_label_set_text(status_label, "Arduino_GFX 18-bit ready");
     lv_obj_set_style_text_color(status_label, lv_color_hex(0x000000), 0);
     lv_obj_align(status_label, LV_ALIGN_TOP_MID, 0, 68);
 
-    spinner_obj = lv_spinner_create(panel);
-    lv_obj_set_size(spinner_obj, 72, 72);
-    lv_obj_align(spinner_obj, LV_ALIGN_CENTER, 0, -10);
-    lv_spinner_set_anim_params(spinner_obj, 1200, 60);
-
-    benchmark_label = lv_label_create(panel);
-    lv_label_set_text(benchmark_label, "loop 0.0 fps\nflush 0 avg 0 us\narea 0x0");
-    lv_obj_set_style_text_color(benchmark_label, lv_color_hex(0x000000), 0);
-    lv_obj_align(benchmark_label, LV_ALIGN_CENTER, 0, 44);
-
     lv_obj_t *hint = lv_label_create(panel);
-    lv_label_set_text(hint, "If this appears, the UI works.");
+    lv_label_set_text(hint, "If this appears, LVGL and the display are working.");
     lv_obj_set_style_text_color(hint, lv_color_hex(0x000000), 0);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -18);
-
-    lv_obj_t *bar = lv_bar_create(panel);
-    lv_obj_set_size(bar, 260, 20);
-    lv_obj_align(bar, LV_ALIGN_BOTTOM_MID, 0, -48);
-    lv_bar_set_range(bar, 0, 100);
-    lv_bar_set_value(bar, 65, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x000000), LV_PART_INDICATOR);
 
     lv_screen_load(screen);
     lv_obj_invalidate(screen);
@@ -162,27 +119,21 @@ void setup() {
     }
 
     Serial.println("[new_library_tester_lvgl] gfx->begin() succeeded");
-    Serial.println("[new_library_tester_lvgl] testing screen colors without extra bus init...");
-
-    // Keep each color visible long enough to confirm the panel is actually responding.
-    Serial.println("[new_library_tester_lvgl] fill RED");
-    gfx->fillScreen(RED);
-    delay(1000);
-
-    Serial.println("[new_library_tester_lvgl] fill GREEN");
-    gfx->fillScreen(GREEN);
-    delay(1000);
-
-    Serial.println("[new_library_tester_lvgl] fill BLUE");
-    gfx->fillScreen(BLUE);
-    delay(1000);
-
-    Serial.println("[new_library_tester_lvgl] fill BLACK");
     gfx->fillScreen(BLACK);
 
     display_width = gfx->width();
     display_height = gfx->height();
     Serial.printf("[new_library_tester_lvgl] display size: %u x %u\n", display_width, display_height);
+
+    // Initialize touch screen
+    Serial.println("[new_library_tester_lvgl] initializing XPT2046 touch");
+    touch = new XPT2046_Touchscreen(TOUCH_CS, TOUCH_IRQ);
+    if (touch->begin()) {
+        Serial.println("[new_library_tester_lvgl] XPT2046 touch initialized");
+        touch->setRotation(1);
+    } else {
+        Serial.println("[new_library_tester_lvgl] XPT2046 touch init failed");
+    }
 
     lv_init();
     lv_log_register_print_cb(log_cb);
@@ -207,15 +158,15 @@ void setup() {
     lv_display_set_buffers(display, draw_buf, nullptr, draw_buf_size_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_default(display);
 
-    indev = lv_indev_create();
-    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
-    lv_indev_set_read_cb(indev, touch_read_cb);
+    // Register touch input device
+    indev_touchpad = lv_indev_create();
+    lv_indev_set_type(indev_touchpad, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev_touchpad, touchpad_read_cb);
+    lv_indev_set_display(indev_touchpad, display);
 
     build_ui();
-    lv_timer_create(benchmark_timer_cb, 250, nullptr);
 
-    last_stats_ms = millis();
-    last_tick_ms = last_stats_ms;
+    last_tick_ms = millis();
     Serial.println("[new_library_tester_lvgl] initialized");
 }
 
@@ -228,10 +179,6 @@ void loop() {
         last_tick_ms = now_ms;
     }
     lv_timer_handler();
-
-    if (now_ms - last_stats_ms >= 1000U) {
-        last_stats_ms = now_ms;
-    }
 
     delay(1);
 }

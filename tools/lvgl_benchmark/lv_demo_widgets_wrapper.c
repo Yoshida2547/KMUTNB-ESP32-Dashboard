@@ -1,0 +1,5 @@
+#include "../../.pio/libdeps/new_library_tester_lvgl/lvgl/demos/widgets/assets/img_lvgl_logo.c"
+#include "../../.pio/libdeps/new_library_tester_lvgl/lvgl/demos/widgets/assets/img_demo_widgets_avatar.c"
+#include "../../.pio/libdeps/new_library_tester_lvgl/lvgl/demos/widgets/assets/img_demo_widgets_needle.c"
+#include "../../.pio/libdeps/new_library_tester_lvgl/lvgl/demos/widgets/assets/img_clothes.c"
+#include "../../.pio/libdeps/new_library_tester_lvgl/lvgl/demos/widgets/lv_demo_widgets.c"

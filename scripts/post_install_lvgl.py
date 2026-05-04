@@ -41,6 +41,13 @@ def copy_lvgl_config():
     with open(dst_path, 'r', encoding='utf-8') as handle:
         config_text = handle.read()
     config_text = config_text.replace('#define LV_USE_TFT_ESPI         1', '#define LV_USE_TFT_ESPI         0')
+
+    if PIOENV == 'lvgl_benchmark':
+        config_text = config_text.replace('#define LV_USE_DEMO_WIDGETS 0', '#define LV_USE_DEMO_WIDGETS 1')
+        config_text = config_text.replace('#define LV_USE_DEMO_BENCHMARK 0', '#define LV_USE_DEMO_BENCHMARK 1')
+        config_text = config_text.replace('#define LV_FONT_MONTSERRAT_24 0', '#define LV_FONT_MONTSERRAT_24 1')
+        config_text = config_text.replace('#define LV_USE_FONT_COMPRESSED 0', '#define LV_USE_FONT_COMPRESSED 1')
+
     with open(dst_path, 'w', encoding='utf-8') as handle:
         handle.write(config_text)
     print(f"✓ Copied lv_conf.h to {dst_path}")

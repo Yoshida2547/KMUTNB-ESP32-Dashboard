@@ -26,6 +26,29 @@ platformio run -e Touch_calibrate      # Calibrate touch input
 platformio run -e KMUTNB-ESP32-V1-LCD-TESTER  # Test display only
 ```
 
+### Runtime Monitoring & Verification
+To monitor and verify your program at runtime, use the serial monitor to view logs and output. You can use `/dev/ttyACM0`, `/dev/ttyUSB0`, or let PlatformIO auto-detect the port:
+
+```bash
+# Use auto-detect (recommended)
+platformio device monitor --baud 115200
+
+# Or specify the port explicitly (e.g. /dev/ttyACM0 or /dev/ttyUSB0)
+platformio device monitor --port /dev/ttyACM0 --baud 115200
+```
+
+Or combine upload and monitoring:
+
+```bash
+# Auto-detect port
+platformio run -e KMUTNB-ESP32-V1 -t upload --monitor-speed 115200
+
+# Or specify port
+platformio run -e KMUTNB-ESP32-V1 -t upload --monitor-port /dev/ttyACM0 --monitor-speed 115200
+```
+
+Use this to verify sensor data, debug output, and runtime status.
+
 ### Build Notes
 - The repository default build target is [`env:KMUTNB-ESP32-V1`](platformio.ini), so `platformio run` builds the main firmware by default.
 - The main firmware lives in [`env:KMUTNB-ESP32-V1`](platformio.ini); utility builds are isolated through `build_src_filter` in the tool environments.

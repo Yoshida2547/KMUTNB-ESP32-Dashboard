@@ -1,0 +1,4 @@
+#include "../../.pio/libdeps/new_library_tester_lvgl/lvgl/demos/transform/assets/img_transform_avatar_15.c"
+#include "../../.pio/libdeps/new_library_tester_lvgl/lvgl/demos/benchmark/assets/img_benchmark_cogwheel_rgb.c"
+#include "../../.pio/libdeps/new_library_tester_lvgl/lvgl/demos/benchmark/assets/img_benchmark_cogwheel_argb.c"
+#include "../../.pio/libdeps/new_library_tester_lvgl/lvgl/demos/benchmark/lv_demo_benchmark.c"

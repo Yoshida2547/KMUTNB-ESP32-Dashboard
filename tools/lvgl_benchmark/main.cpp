@@ -2,11 +2,13 @@
 #include <Arduino_GFX_Library.h>
 #include <esp_heap_caps.h>
 #include <lvgl.h>
+#include <XPT2046_Touchscreen.h>
 
 #include <demos/lv_demos.h>
 
 namespace {
 
+// Display SPI pins (HSPI)
 constexpr int8_t PIN_MISO = 47;
 constexpr int8_t PIN_MOSI = 11;
 constexpr int8_t PIN_SCLK = 10;
@@ -15,11 +17,22 @@ constexpr int8_t PIN_DC = 7;
 constexpr int8_t PIN_RST = 46;
 constexpr int8_t PIN_BL = 16;
 
+// Touch SPI pins (separate from display)
+constexpr int8_t TOUCH_CS = 17;
+constexpr int8_t TOUCH_IRQ = 21;
+constexpr int8_t TOUCH_MISO = 5;
+constexpr int8_t TOUCH_MOSI = 6;
+constexpr int8_t TOUCH_CLK = 4;
+
 Arduino_DataBus *bus = new Arduino_ESP32SPI(PIN_DC, PIN_CS, PIN_SCLK, PIN_MOSI, PIN_MISO);
 Arduino_GFX *gfx = new Arduino_ILI9488_18bit(bus, PIN_RST, 1, false);
 
+SPIClass vspi = SPIClass(FSPI);
+XPT2046_Touchscreen *touch = nullptr;
+
 static lv_color_t *draw_buf = nullptr;
 static lv_display_t *display = nullptr;
+static lv_indev_t *indev_touchpad = nullptr;
 static uint32_t display_width = 0;
 static uint32_t display_height = 0;
 static uint32_t last_tick_ms = 0;
@@ -35,6 +48,30 @@ void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
 
     gfx->draw24bitRGBBitmap(area->x1, area->y1, px_map, w, h);
     lv_display_flush_ready(disp);
+}
+
+void touchpad_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
+    LV_UNUSED(indev);
+
+    if (!touch) {
+        data->state = LV_INDEV_STATE_REL;
+        return;
+    }
+
+    if (touch->touched()) {
+        TS_Point p = touch->getPoint();
+
+        int16_t x = map(p.x, 200, 3700, 1, display_width);
+        int16_t y = map(p.y, 240, 3800, display_height, 1);
+
+        data->point.x = x;
+        data->point.y = y;
+        data->state = LV_INDEV_STATE_PR;
+
+        Serial.printf("[lvgl_benchmark][touch] raw=(%d,%d) mapped=(%d,%d)\n", p.x, p.y, x, y);
+    } else {
+        data->state = LV_INDEV_STATE_REL;
+    }
 }
 
 }  // namespace
@@ -61,6 +98,16 @@ void setup() {
     display_height = gfx->height();
     Serial.printf("[lvgl_benchmark] display size: %u x %u\n", display_width, display_height);
 
+    Serial.println("[lvgl_benchmark] initializing XPT2046 touch");
+    vspi.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
+    touch = new XPT2046_Touchscreen(TOUCH_CS, TOUCH_IRQ);
+    if (touch->begin(vspi)) {
+        Serial.println("[lvgl_benchmark] XPT2046 touch initialized");
+        touch->setRotation(1);
+    } else {
+        Serial.println("[lvgl_benchmark] XPT2046 touch init failed");
+    }
+
     lv_init();
     lv_log_register_print_cb(log_cb);
 
@@ -86,6 +133,11 @@ void setup() {
     lv_display_set_flush_cb(display, flush_cb);
     lv_display_set_buffers(display, draw_buf, nullptr, draw_buf_size_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_default(display);
+
+    indev_touchpad = lv_indev_create();
+    lv_indev_set_type(indev_touchpad, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev_touchpad, touchpad_read_cb);
+    lv_indev_set_display(indev_touchpad, display);
 
     lv_demo_benchmark();
 
